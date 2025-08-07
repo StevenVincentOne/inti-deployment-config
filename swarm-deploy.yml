@@ -1,0 +1,124 @@
+version: '3.9'
+
+networks:
+  unmute-net:
+    external: true
+
+volumes:
+  traefik-cert:
+  huggingface-cache:
+  vllm-cache:
+  stt-cargo-registry:
+  stt-target:
+  stt-uv-cache:
+  stt-logs:
+  tts-cargo-registry:
+  tts-target:
+  tts-uv-cache:
+  tts-logs:
+  models-data:
+
+services:
+  traefik:
+    image: traefik:v2.11
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.swarmMode=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.le.acme.httpchallenge=true"
+      - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.le.acme.email=steve@intellipedia.ai"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - traefik-cert:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+    networks:
+      - unmute-net
+
+  frontend:
+    image: intellipedia/inti-frontend-viz-fixed:v4.1
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.frontend.rule=Host(`inti.intellipedia.ai`)"
+        - "traefik.http.routers.frontend.entrypoints=websecure"
+        - "traefik.http.routers.frontend.tls.certresolver=le"
+        - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+    networks:
+      - unmute-net
+
+  backend:
+    image: ghcr.io/stevenvincentone/intiai-backend@sha256:c64c89db9f2f36fa15b7a750120ef9ebc51c245ea503f15eea47ec07aa874762
+    env_file:
+      - .env
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.backend.rule=Host(`inti.intellipedia.ai`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.backend.entrypoints=websecure"
+        - "traefik.http.routers.backend.tls.certresolver=le"
+        - "traefik.http.routers.backend.priority=100"
+        - "traefik.http.routers.backend.middlewares=api-stripprefix"
+        - "traefik.http.middlewares.api-stripprefix.stripprefix.prefixes=/api"
+        - "traefik.http.services.backend.loadbalancer.server.port=80"
+    networks:
+      - unmute-net
+
+  llm:
+    image: intellipedia/inti-vllm-openai:latest
+    command:
+      - "--model=mistralai/Mistral-7B-Instruct-v0.2"
+      - "--max-model-len=1536"
+      - "--gpu-memory-utilization=0.4"
+    env_file:
+      - .env
+    volumes:
+      - huggingface-cache:/root/.cache/huggingface
+      - vllm-cache:/root/.cache/vllm
+    networks:
+      - unmute-net
+
+  stt:
+    image: ghcr.io/stevenvincentone/intiai-moshi-server@sha256:c5907c5f24f1ca616ffe0085f8e18059fbfbd1833713aadca20c4c66959d8e75
+    command:
+      - worker
+      - --config
+      - configs/stt.toml
+    env_file:
+      - .env
+    volumes:
+      - stt-cargo-registry:/root/.cargo/registry
+      - stt-target:/app/target
+      - stt-uv-cache:/root/.cache/uv
+      - models-data:/models
+      - stt-logs:/logs
+    networks:
+      - unmute-net
+
+  tts:
+    image: ghcr.io/stevenvincentone/intiai-moshi-server@sha256:c5907c5f24f1ca616ffe0085f8e18059fbfbd1833713aadca20c4c66959d8e75
+    command:
+      - worker
+      - --config
+      - configs/tts.toml
+    env_file:
+      - .env
+    volumes:
+      - tts-cargo-registry:/root/.cargo/registry
+      - tts-target:/app/target
+      - tts-uv-cache:/root/.cache/uv
+      - models-data:/models
+      - tts-logs:/logs
+    networks:
+      - unmute-net

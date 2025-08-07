@@ -1,0 +1,31 @@
+version: '3.9'
+
+networks:
+  unmute-net:
+    external: true
+
+volumes:
+  huggingface-cache:
+  vllm-cache:
+
+services:
+  llm:
+    image: vllm/vllm-openai@sha256:0b51ec38fb965b44f6aa75d8d847c5f21bc062b7140e1d83444b39b67fc4a2ea
+    command:
+      - "--model=mistralai/Mistral-7B-Instruct-v0.2"
+      - "--max-model-len=1536"
+      - "--gpu-memory-utilization=0.4"
+      - "--swap-space=8"
+    env_file:
+      - .env
+    volumes:
+      - huggingface-cache:/root/.cache/huggingface
+      - vllm-cache:/root/.cache/vllm
+    networks:
+      - unmute-net
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: none
